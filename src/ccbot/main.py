@@ -58,7 +58,11 @@ def main() -> None:
     from .bot import create_bot
 
     application = create_bot()
-    application.run_polling(allowed_updates=["message", "callback_query"])
+    application.run_polling(
+        allowed_updates=["message", "callback_query"],
+        drop_pending_updates=True,
+        bootstrap_retries=-1,
+    )
 
 
 if __name__ == "__main__":
