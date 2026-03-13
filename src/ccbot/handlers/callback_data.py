@@ -47,5 +47,10 @@ CB_SESSION_SELECT = "rs:sel:"  # rs:sel:<index>
 CB_SESSION_NEW = "rs:new"  # start a new session
 CB_SESSION_CANCEL = "rs:cancel"  # cancel
 
+# Pinned directories quick-start
+CB_PIN_SELECT = "pin:sel:"  # pin:sel:<index>
+CB_PIN_BROWSE = "pin:browse"  # fall through to directory browser
+CB_PIN_CANCEL = "pin:cancel"  # cancel pinned picker
+
 # Screenshot control keys
 CB_KEYS_PREFIX = "kb:"  # kb:<key_id>:<window>

@@ -28,6 +28,9 @@ from .callback_data import (
     CB_DIR_PAGE,
     CB_DIR_SELECT,
     CB_DIR_UP,
+    CB_PIN_BROWSE,
+    CB_PIN_CANCEL,
+    CB_PIN_SELECT,
     CB_SESSION_CANCEL,
     CB_SESSION_NEW,
     CB_SESSION_SELECT,
@@ -49,6 +52,8 @@ BROWSE_DIRS_KEY = "browse_dirs"  # Cache of subdirs for current path
 UNBOUND_WINDOWS_KEY = "unbound_windows"  # Cache of (name, cwd) tuples
 STATE_SELECTING_SESSION = "selecting_session"
 SESSIONS_KEY = "cached_sessions"  # Cache of ClaudeSession list
+STATE_SELECTING_PINNED = "selecting_pinned"
+PINNED_DIRS_KEY = "pinned_dirs_cache"  # Cache of resolved pinned dir paths
 
 
 def clear_browse_state(user_data: dict | None) -> None:
@@ -72,6 +77,48 @@ def clear_session_picker_state(user_data: dict | None) -> None:
     if user_data is not None:
         user_data.pop(STATE_KEY, None)
         user_data.pop(SESSIONS_KEY, None)
+
+
+def clear_pinned_state(user_data: dict | None) -> None:
+    """Clear pinned directory picker state keys from user_data."""
+    if user_data is not None:
+        user_data.pop(STATE_KEY, None)
+        user_data.pop(PINNED_DIRS_KEY, None)
+
+
+def build_pinned_dirs(
+    pinned_dirs: list[str],
+) -> tuple[str, InlineKeyboardMarkup]:
+    """Build quick-start UI for pinned directories.
+
+    Args:
+        pinned_dirs: List of resolved absolute directory paths.
+
+    Returns: (text, keyboard).
+    """
+    text = "⭐ *Quick Start*\n\nTap a project to start, or browse for more."
+
+    buttons: list[list[InlineKeyboardButton]] = []
+    for i in range(0, len(pinned_dirs), 2):
+        row = []
+        for j in range(min(2, len(pinned_dirs) - i)):
+            name = Path(pinned_dirs[i + j]).name
+            display = name[:12] + "…" if len(name) > 13 else name
+            row.append(
+                InlineKeyboardButton(
+                    f"📁 {display}", callback_data=f"{CB_PIN_SELECT}{i + j}"
+                )
+            )
+        buttons.append(row)
+
+    buttons.append(
+        [
+            InlineKeyboardButton("🔍 Browse…", callback_data=CB_PIN_BROWSE),
+            InlineKeyboardButton("Cancel", callback_data=CB_PIN_CANCEL),
+        ]
+    )
+
+    return text, InlineKeyboardMarkup(buttons)
 
 
 def build_window_picker(

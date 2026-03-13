@@ -79,6 +79,9 @@ from .handlers.callback_data import (
     CB_SESSION_NEW,
     CB_SESSION_SELECT,
     CB_KEYS_PREFIX,
+    CB_PIN_BROWSE,
+    CB_PIN_CANCEL,
+    CB_PIN_SELECT,
     CB_SCREENSHOT_REFRESH,
     CB_WIN_BIND,
     CB_WIN_CANCEL,
@@ -88,16 +91,20 @@ from .handlers.directory_browser import (
     BROWSE_DIRS_KEY,
     BROWSE_PAGE_KEY,
     BROWSE_PATH_KEY,
+    PINNED_DIRS_KEY,
     SESSIONS_KEY,
     STATE_BROWSING_DIRECTORY,
     STATE_KEY,
+    STATE_SELECTING_PINNED,
     STATE_SELECTING_SESSION,
     STATE_SELECTING_WINDOW,
     UNBOUND_WINDOWS_KEY,
     build_directory_browser,
+    build_pinned_dirs,
     build_session_picker,
     build_window_picker,
     clear_browse_state,
+    clear_pinned_state,
     clear_session_picker_state,
     clear_window_picker_state,
 )
@@ -911,7 +918,22 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await safe_reply(update.message, msg_text, reply_markup=keyboard)
             return
 
-        # No unbound windows — show directory browser to create a new session
+        # No unbound windows — show pinned dirs (if configured) or directory browser
+        if config.pinned_dirs:
+            logger.info(
+                "Unbound topic: showing pinned dirs (user=%d, thread=%d)",
+                user.id,
+                thread_id,
+            )
+            msg_text, keyboard = build_pinned_dirs(config.pinned_dirs)
+            if context.user_data is not None:
+                context.user_data[STATE_KEY] = STATE_SELECTING_PINNED
+                context.user_data[PINNED_DIRS_KEY] = config.pinned_dirs
+                context.user_data["_pending_thread_id"] = thread_id
+                context.user_data["_pending_thread_text"] = text
+            await safe_reply(update.message, msg_text, reply_markup=keyboard)
+            return
+
         logger.info(
             "Unbound topic: showing directory browser (user=%d, thread=%d)",
             user.id,
@@ -1180,6 +1202,81 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         else:
             await safe_edit(query, "Window no longer exists.")
         await query.answer("Page updated")
+
+    # Pinned directories: select a pinned project
+    elif data.startswith(CB_PIN_SELECT):
+        pending_tid = (
+            context.user_data.get("_pending_thread_id") if context.user_data else None
+        )
+        if pending_tid is not None and _get_thread_id(update) != pending_tid:
+            await query.answer("Stale picker (topic mismatch)", show_alert=True)
+            return
+        try:
+            idx = int(data[len(CB_PIN_SELECT) :])
+        except ValueError:
+            await query.answer("Invalid data")
+            return
+
+        cached_pins: list[str] = (
+            context.user_data.get(PINNED_DIRS_KEY, []) if context.user_data else []
+        )
+        if idx < 0 or idx >= len(cached_pins):
+            await query.answer("Directory list changed", show_alert=True)
+            return
+
+        selected_path = cached_pins[idx]
+        clear_pinned_state(context.user_data)
+
+        # Check for existing sessions in this directory
+        sessions = await session_manager.list_sessions_for_directory(selected_path)
+        if sessions:
+            if context.user_data is not None:
+                context.user_data[STATE_KEY] = STATE_SELECTING_SESSION
+                context.user_data[SESSIONS_KEY] = sessions
+                context.user_data["_selected_path"] = selected_path
+            text, keyboard = build_session_picker(sessions)
+            await safe_edit(query, text, reply_markup=keyboard)
+            await query.answer()
+            return
+
+        # No existing sessions — create new window directly
+        await _create_and_bind_window(
+            query, context, user, selected_path, pending_tid
+        )
+
+    # Pinned directories: browse → fall through to directory browser
+    elif data == CB_PIN_BROWSE:
+        pending_tid = (
+            context.user_data.get("_pending_thread_id") if context.user_data else None
+        )
+        if pending_tid is not None and _get_thread_id(update) != pending_tid:
+            await query.answer("Stale picker (topic mismatch)", show_alert=True)
+            return
+        clear_pinned_state(context.user_data)
+        start_path = str(Path.cwd())
+        msg_text, keyboard, subdirs = build_directory_browser(start_path)
+        if context.user_data is not None:
+            context.user_data[STATE_KEY] = STATE_BROWSING_DIRECTORY
+            context.user_data[BROWSE_PATH_KEY] = start_path
+            context.user_data[BROWSE_PAGE_KEY] = 0
+            context.user_data[BROWSE_DIRS_KEY] = subdirs
+        await safe_edit(query, msg_text, reply_markup=keyboard)
+        await query.answer()
+
+    # Pinned directories: cancel
+    elif data == CB_PIN_CANCEL:
+        pending_tid = (
+            context.user_data.get("_pending_thread_id") if context.user_data else None
+        )
+        if pending_tid is not None and _get_thread_id(update) != pending_tid:
+            await query.answer("Stale picker (topic mismatch)", show_alert=True)
+            return
+        clear_pinned_state(context.user_data)
+        if context.user_data is not None:
+            context.user_data.pop("_pending_thread_id", None)
+            context.user_data.pop("_pending_thread_text", None)
+        await safe_edit(query, "Cancelled")
+        await query.answer("Cancelled")
 
     # Directory browser handlers
     elif data.startswith(CB_DIR_SELECT):

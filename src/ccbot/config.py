@@ -93,6 +93,15 @@ class Config:
             os.getenv("CCBOT_SHOW_HIDDEN_DIRS", "").lower() == "true"
         )
 
+        # Pinned directories for quick-start UI
+        pinned_dirs_str = os.getenv("PINNED_DIRS", "")
+        self.pinned_dirs: list[str] = []
+        if pinned_dirs_str:
+            for d in pinned_dirs_str.split(","):
+                expanded = str(Path(d.strip()).expanduser().resolve())
+                if Path(expanded).is_dir():
+                    self.pinned_dirs.append(expanded)
+
         # OpenAI API for voice message transcription (optional)
         self.openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
         self.openai_base_url: str = os.getenv(
