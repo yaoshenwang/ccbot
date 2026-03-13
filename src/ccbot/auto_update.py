@@ -264,9 +264,14 @@ class AutoUpdater:
         return True
 
     async def _notify_users(self, message: str) -> None:
-        """Send update notification to all bound topics."""
+        """Send update notification to all bound topics.
+
+        Stale bindings (closed/deleted topics) are cleaned up on failure.
+        """
+        # Snapshot to avoid modifying during iteration
+        bindings = list(session_manager.iter_thread_bindings())
         notified: set[tuple[int, int]] = set()
-        for user_id, thread_id, _window_id in session_manager.iter_thread_bindings():
+        for user_id, thread_id, _window_id in bindings:
             key = (user_id, thread_id)
             if key in notified:
                 continue
@@ -275,8 +280,22 @@ class AutoUpdater:
             chat_id = session_manager.resolve_chat_id(user_id, thread_id)
             try:
                 await safe_send(self._bot, chat_id, message, thread_id)
-            except Exception:
-                logger.warning("Failed to notify user=%d thread=%d", user_id, thread_id)
+            except Exception as e:
+                err_msg = str(e).lower()
+                if "thread not found" in err_msg or "chat not found" in err_msg:
+                    logger.info(
+                        "Cleaning stale binding: user=%d thread=%d",
+                        user_id,
+                        thread_id,
+                    )
+                    session_manager.unbind_thread(user_id, thread_id)
+                else:
+                    logger.warning(
+                        "Failed to notify user=%d thread=%d: %s",
+                        user_id,
+                        thread_id,
+                        e,
+                    )
 
     async def _perform_upgrade(self) -> None:
         """Execute the upgrade: notify users, update code, exit."""
