@@ -23,20 +23,27 @@ ccbot hook --install                  # 自动安装 Claude Code SessionStart ho
 
 ## 分支管理
 
-| 分支 | 用途 | Telegram Bot | 部署 |
-|:-----|:-----|:-------------|:-----|
-| **main** | 生产版本，稳定可用 | 生产 bot | Mac Mini `uv tool install ...` |
-| **dev** | 功能开发与测试 | 测试 bot | Mac Mini 单独实例 |
+| 分支 | 用途 | Telegram Bot | 群组 | 部署目标 |
+|:-----|:-----|:-------------|:-----|:---------|
+| **main** | 生产版本，稳定可用 | `@ccmux_bot`（生产） | 生产群组 | Mac Mini LaunchAgent |
+| **dev** | 功能开发与测试 | `@ccmux_dev_bot`（测试） | 测试群组 | Mac Mini 单独进程 |
+
+两个 bot 各自绑定独立的 Telegram 群组，互不干扰。dev bot 的 `.env` 使用不同的 `TELEGRAM_BOT_TOKEN`，但 `ALLOWED_USERS` 相同。
 
 **工作流：**
-1. 所有新功能在 `dev` 分支开发，绑定测试 bot 验证
-2. 测试通过后 merge 到 `main`
-3. Mac Mini 上 `uv tool install git+<repo>@main --force` 更新生产
+1. 功能开发始终在 `dev` 分支进行
+2. 在测试群组中通过 dev bot 验证功能正常
+3. 确认无误后 `git merge dev` 到 `main`，推送远程
+4. Mac Mini 上更新生产：`uv tool install git+<repo>@main --force` → 重启 LaunchAgent
 
-| 禁止 | 原因 |
+**核心准则：**
+
+| 规则 | 说明 |
 |:-----|:-----|
-| 直接在 main 上开发 | 可能导致生产 bot 不可用 |
-| 未测试就合并到 main | 保证生产稳定性 |
+| 禁止直接在 main 上开发 | 所有改动必须先经 dev 分支验证 |
+| 禁止未测试就合并到 main | 必须在测试群组实际操作确认 |
+| dev 改坏不影响生产 | 两个 bot 进程完全隔离 |
+| 回滚优先 | 生产出问题时，`git revert` 或重装上一个 main commit |
 
 ---
 
@@ -89,22 +96,39 @@ ccbot hook --install                  # 自动安装 Claude Code SessionStart ho
 
 ## 部署环境（Mac Mini）
 
+仓库地址：`https://github.com/yaoshenwang/ccbot.git`（fork 自 `six-ddc/ccbot`）
+
+### 生产实例（main 分支）
+
 | 配置项 | 值 |
 |:-------|:---|
-| 安装方式 | `uv tool install git+https://github.com/yaoshenwang/ccbot.git` |
+| 安装方式 | `uv tool install git+https://github.com/yaoshenwang/ccbot.git --force` |
 | 配置文件 | `~/.ccbot/.env` |
 | LaunchAgent | `~/Library/LaunchAgents/com.ccbot.plist` |
 | 日志 | `/tmp/ccbot.log`, `/tmp/ccbot.err` |
 
+### 测试实例（dev 分支）
+
+| 配置项 | 值 |
+|:-------|:---|
+| 安装方式 | clone 仓库，切 dev 分支，`uv run ccbot run` 前台运行 |
+| 配置文件 | 项目目录下 `.env`（使用 dev bot token） |
+| 运行方式 | 手动前台运行，不需要 LaunchAgent |
+
+### 常用操作
+
 ```bash
-# 部署新版本
+# 更新生产版本
 ssh mini 'source ~/.zshrc; uv tool install git+https://github.com/yaoshenwang/ccbot.git --force'
 
-# 重启服务
+# 重启生产服务
 ssh mini 'launchctl unload ~/Library/LaunchAgents/com.ccbot.plist && launchctl load ~/Library/LaunchAgents/com.ccbot.plist'
 
-# 查看日志
+# 查看生产日志
 ssh mini 'tail -50 /tmp/ccbot.log'
+
+# 回滚到指定版本
+ssh mini 'source ~/.zshrc; uv tool install git+https://github.com/yaoshenwang/ccbot.git@<commit_hash> --force'
 ```
 
 ---
