@@ -144,6 +144,31 @@ def _detect_branch() -> str | None:
     return None
 
 
+def _get_local_hash() -> str | None:
+    """Get the current local commit hash.
+
+    In dev mode, reads directly from git (always accurate after git reset).
+    In production, falls back to extracting from __version__.
+    """
+    if _is_dev_mode():
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--short=7", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                cwd=Path(__file__).resolve().parent.parent.parent,
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except Exception:
+            pass
+
+    from . import __version__
+
+    return extract_commit_hash(__version__)
+
+
 class AutoUpdater:
     """Background task that checks for remote updates and performs upgrades."""
 
@@ -167,9 +192,7 @@ class AutoUpdater:
             self._task = asyncio.create_task(asyncio.sleep(0))
             return self._task
 
-        from . import __version__
-
-        self._local_hash = extract_commit_hash(__version__)
+        self._local_hash = _get_local_hash()
         logger.info(
             "Auto-update started: branch=%s, local_hash=%s, dev_mode=%s",
             self._branch,
