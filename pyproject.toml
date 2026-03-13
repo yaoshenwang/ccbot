@@ -1,6 +1,6 @@
 [project]
 name = "ccbot"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Telegram Bot for monitoring Claude Code sessions"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -12,6 +12,7 @@ dependencies = [
     "Pillow>=10.0.0",
     "aiofiles>=24.0.0",
     "telegramify-markdown>=0.5.0,<1.0.0",
+    "watchfiles>=1.0.0",
 ]
 
 [project.scripts]
@@ -27,8 +28,14 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/ccbot/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ccbot"]

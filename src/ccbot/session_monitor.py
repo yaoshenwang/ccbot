@@ -348,8 +348,9 @@ class SessionMonitor:
                 for entry in parsed_entries:
                     if not entry.text and not entry.image_data:
                         continue
-                    # Skip user messages unless show_user_messages is enabled
-                    if entry.role == "user" and not config.show_user_messages:
+                    # Skip user messages in real-time notifications
+                    # (user messages are only shown in /history)
+                    if entry.role == "user":
                         continue
                     new_messages.append(
                         NewMessage(

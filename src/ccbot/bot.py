@@ -18,6 +18,9 @@ Core responsibilities:
     (topic_closed_handler). Unsupported content (stickers, etc.)
     is rejected with a warning (unsupported_content_handler).
   - Bot lifecycle management: post_init, post_shutdown, create_bot.
+  - Global error handler: Conflict → exit for supervisor restart;
+    NetworkError → log and retry; others → log only.
+  - /restart command: graceful exit (code 0) for supervisor restart.
 
 Handler modules (in handlers/):
   - callback_data: Callback data constants
@@ -32,11 +35,18 @@ Handler modules (in handlers/):
 Key functions: create_bot(), handle_new_message().
 """
 
+from __future__ import annotations
+
 import asyncio
 import io
 import logging
+import os
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import httpx
 
 from telegram import (
     Bot,
@@ -47,6 +57,7 @@ from telegram import (
     Update,
 )
 from telegram.constants import ChatAction
+from telegram.error import Conflict, NetworkError
 from telegram.ext import (
     AIORateLimiter,
     Application,
@@ -385,11 +396,100 @@ async def unpin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     args = update.message.text or ""
     name = args.removeprefix("/unpin").strip()
     if not name:
-        await safe_reply(update.message, "用法: `/unpin project` 或 `/unpin ~/dev/project`")
+        await safe_reply(
+            update.message, "用法: `/unpin project` 或 `/unpin ~/dev/project`"
+        )
         return
 
     ok, msg = config.remove_pinned_dir(name)
     await safe_reply(update.message, msg)
+
+
+def _extract_commit_hash(version: str) -> str | None:
+    """Extract commit hash from version string like '0.1.dev89+g7a7d613'."""
+    if "+g" in version:
+        return version.split("+g")[-1]
+    return None
+
+
+def _relative_time(iso_time: str) -> str:
+    """Convert ISO 8601 timestamp to Chinese relative time string."""
+    from datetime import datetime, timezone
+
+    dt = datetime.fromisoformat(iso_time.replace("Z", "+00:00"))
+    delta = datetime.now(timezone.utc) - dt
+    seconds = int(delta.total_seconds())
+    if seconds < 60:
+        return f"{seconds}秒前"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}分钟前"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}小时前"
+    days = hours // 24
+    return f"{days}天前"
+
+
+async def _fetch_branch_info(
+    client: httpx.AsyncClient, branch: str
+) -> tuple[str, str, str] | None:
+    """Fetch latest commit info for a branch. Returns (sha7, relative_time, message)."""
+    url = f"https://api.github.com/repos/yaoshenwang/ccbot/commits/{branch}"
+    try:
+        resp = await client.get(url, timeout=5.0)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        sha7 = data["sha"][:7]
+        commit_date = data["commit"]["committer"]["date"]
+        message = data["commit"]["message"].split("\n")[0]
+        return sha7, _relative_time(commit_date), message
+    except Exception:
+        return None
+
+
+async def version_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Reply with current ccbot version and remote branch comparison."""
+    user = update.effective_user
+    if not user or not is_user_allowed(user.id):
+        return
+    if not update.message:
+        return
+
+    from . import __version__
+
+    current_hash = _extract_commit_hash(__version__)
+    lines = [
+        "📦 ccbot 版本信息\n",
+        f"运行中: {__version__}",
+    ]
+    if current_hash:
+        lines.append(f"commit: {current_hash}")
+
+    # Fetch remote branch info
+    import httpx
+
+    async with httpx.AsyncClient() as client:
+        main_info, dev_info = await asyncio.gather(
+            _fetch_branch_info(client, "main"),
+            _fetch_branch_info(client, "dev"),
+        )
+
+    remote_lines: list[str] = []
+    for name, info in [("main", main_info), ("dev", dev_info)]:
+        if info is None:
+            remote_lines.append(f"  {name}: 获取失败")
+        else:
+            sha7, rel_time, msg = info
+            match = " ✅" if current_hash and sha7 == current_hash else ""
+            remote_lines.append(f"  {name}: {sha7} · {rel_time} · {msg}{match}")
+
+    if remote_lines:
+        lines.append("\n远程分支:")
+        lines.extend(remote_lines)
+
+    await safe_reply(update.message, "\n".join(lines))
 
 
 async def pins_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -413,6 +513,19 @@ async def pins_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         lines.append(f"• `{display}`")
     lines.append(f"\n共 {len(config.pinned_dirs)} 个")
     await safe_reply(update.message, "\n".join(lines))
+
+
+async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Restart ccbot process — process supervisor will re-launch."""
+    user = update.effective_user
+    if not user or not is_user_allowed(user.id):
+        return
+    if not update.message:
+        return
+
+    await safe_reply(update.message, "🔄 正在重启 ccbot...")
+    await asyncio.sleep(0.5)
+    os._exit(0)
 
 
 # --- Screenshot keyboard with quick control keys ---
@@ -1299,9 +1412,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             return
 
         # No existing sessions — create new window directly
-        await _create_and_bind_window(
-            query, context, user, selected_path, pending_tid
-        )
+        await _create_and_bind_window(query, context, user, selected_path, pending_tid)
 
     # Pinned directories: browse → fall through to directory browser
     elif data == CB_PIN_BROWSE:
@@ -1976,6 +2087,8 @@ async def post_init(application: Application) -> None:
         BotCommand("pin", "Pin a directory: /pin ~/dev/project"),
         BotCommand("unpin", "Unpin a directory: /unpin project"),
         BotCommand("pins", "List pinned directories"),
+        BotCommand("version", "Show ccbot version"),
+        BotCommand("restart", "Restart ccbot"),
     ]
     # Add Claude Code slash commands
     for cmd_name, desc in CC_COMMANDS.items():
@@ -2035,6 +2148,18 @@ async def post_shutdown(application: Application) -> None:
     await close_transcribe_client()
 
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Global error handler — log errors, exit on Conflict."""
+    error = context.error
+    if isinstance(error, Conflict):
+        logger.critical("Conflict: another bot instance is polling. Exiting.")
+        os._exit(1)
+    if isinstance(error, NetworkError):
+        logger.warning("Network error (will retry): %s", error)
+        return
+    logger.error("Unhandled error: %s", error, exc_info=error)
+
+
 def create_bot() -> Application:
     application = (
         Application.builder()
@@ -2058,6 +2183,8 @@ def create_bot() -> Application:
     application.add_handler(CommandHandler("pin", pin_command))
     application.add_handler(CommandHandler("unpin", unpin_command))
     application.add_handler(CommandHandler("pins", pins_command))
+    application.add_handler(CommandHandler("version", version_command))
+    application.add_handler(CommandHandler("restart", restart_command))
     application.add_handler(CallbackQueryHandler(callback_handler))
     # Topic closed event — auto-kill associated window
     application.add_handler(
@@ -2089,5 +2216,7 @@ def create_bot() -> Application:
             unsupported_content_handler,
         )
     )
+
+    application.add_error_handler(error_handler)
 
     return application

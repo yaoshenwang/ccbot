@@ -44,7 +44,7 @@ ccbot hook --install                  # 自动安装 Claude Code SessionStart ho
 | 禁止未测试就合并到 main | 必须在测试群组实际操作确认 |
 | dev 改坏不影响生产 | 两个 bot 进程完全隔离 |
 | 回滚优先 | 生产出问题时，`git revert` 或重装上一个 main commit |
-| 修改必须提交并推送 | 每次代码修改在交付前必须完成 commit 并 push 到远程仓库 |
+| 修改必须提交并推送 | 每次代码修改完成并通过验证（lint/type/test）后，必须立即 `git add` → `git commit` → `git push`，确认 push 成功后才能向用户汇报任务完成。不允许只改代码不提交、或只提交不推送。 |
 
 ---
 

@@ -1,0 +1,21 @@
+name: Deploy to Mac Mini
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.MINI_SSH_HOST }}
+          username: ${{ secrets.MINI_SSH_USER }}
+          key: ${{ secrets.MINI_SSH_KEY }}
+          script: |
+            source ~/.zshrc
+            uv tool install git+https://github.com/yaoshenwang/ccbot.git --force
+            launchctl unload ~/Library/LaunchAgents/com.ccbot.plist
+            launchctl load ~/Library/LaunchAgents/com.ccbot.plist
