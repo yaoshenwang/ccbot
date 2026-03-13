@@ -406,9 +406,12 @@ async def unpin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 def _extract_commit_hash(version: str) -> str | None:
-    """Extract commit hash from version string like '0.1.dev89+g7a7d613'."""
+    """Extract 7-char commit hash from version string like '0.1.dev89+g7a7d613.d20260313'."""
     if "+g" in version:
-        return version.split("+g")[-1]
+        raw = version.split("+g")[-1]
+        # Strip dirty date suffix (.dYYYYMMDD)
+        hash_part = raw.split(".")[0]
+        return hash_part[:7]
     return None
 
 
