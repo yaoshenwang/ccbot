@@ -27,7 +27,6 @@ from telegram import Bot
 
 from .config import config
 from .handlers.message_queue import get_message_queue
-from .handlers.message_sender import safe_send
 from .session import session_manager
 from .terminal_parser import parse_status_line
 from .tmux_manager import tmux_manager
@@ -279,7 +278,12 @@ class AutoUpdater:
 
             chat_id = session_manager.resolve_chat_id(user_id, thread_id)
             try:
-                await safe_send(self._bot, chat_id, message, thread_id)
+                # Use bot.send_message directly (not safe_send which swallows errors)
+                await self._bot.send_message(
+                    chat_id=chat_id,
+                    text=message,
+                    message_thread_id=thread_id,
+                )
             except Exception as e:
                 err_msg = str(e).lower()
                 if "thread not found" in err_msg or "chat not found" in err_msg:
