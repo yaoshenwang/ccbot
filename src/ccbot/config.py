@@ -107,6 +107,9 @@ class Config:
         self.pinned_dirs_file = self.config_dir / "pinned_dirs.json"
         self.pinned_dirs: list[str] = self._load_pinned_dirs()
 
+        # Auto-update branch override (optional)
+        self.ccbot_branch: str = os.getenv("CCBOT_BRANCH", "")
+
         # OpenAI API for voice message transcription (optional)
         self.openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
         self.openai_base_url: str = os.getenv(

@@ -43,11 +43,6 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    import httpx
-
 from telegram import (
     Bot,
     BotCommand,
@@ -152,6 +147,13 @@ from .session import session_manager
 from .session_monitor import NewMessage, SessionMonitor
 from .terminal_parser import extract_bash_output, is_interactive_ui
 from .tmux_manager import tmux_manager
+from .auto_update import (
+    extract_commit_hash,
+    fetch_branch_info,
+    is_update_in_progress,
+    start_auto_update,
+    stop_auto_update,
+)
 from .transcribe import close_client as close_transcribe_client
 from .transcribe import transcribe_voice
 from .utils import ccbot_dir
@@ -405,53 +407,6 @@ async def unpin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await safe_reply(update.message, msg)
 
 
-def _extract_commit_hash(version: str) -> str | None:
-    """Extract 7-char commit hash from version string like '0.1.dev89+g7a7d613.d20260313'."""
-    if "+g" in version:
-        raw = version.split("+g")[-1]
-        # Strip dirty date suffix (.dYYYYMMDD)
-        hash_part = raw.split(".")[0]
-        return hash_part[:7]
-    return None
-
-
-def _relative_time(iso_time: str) -> str:
-    """Convert ISO 8601 timestamp to Chinese relative time string."""
-    from datetime import datetime, timezone
-
-    dt = datetime.fromisoformat(iso_time.replace("Z", "+00:00"))
-    delta = datetime.now(timezone.utc) - dt
-    seconds = int(delta.total_seconds())
-    if seconds < 60:
-        return f"{seconds}秒前"
-    minutes = seconds // 60
-    if minutes < 60:
-        return f"{minutes}分钟前"
-    hours = minutes // 60
-    if hours < 24:
-        return f"{hours}小时前"
-    days = hours // 24
-    return f"{days}天前"
-
-
-async def _fetch_branch_info(
-    client: httpx.AsyncClient, branch: str
-) -> tuple[str, str, str] | None:
-    """Fetch latest commit info for a branch. Returns (sha7, relative_time, message)."""
-    url = f"https://api.github.com/repos/yaoshenwang/ccbot/commits/{branch}"
-    try:
-        resp = await client.get(url, timeout=5.0)
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
-        sha7 = data["sha"][:7]
-        commit_date = data["commit"]["committer"]["date"]
-        message = data["commit"]["message"].split("\n")[0]
-        return sha7, _relative_time(commit_date), message
-    except Exception:
-        return None
-
-
 async def version_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reply with current ccbot version and remote branch comparison."""
     user = update.effective_user
@@ -462,7 +417,7 @@ async def version_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     from . import __version__
 
-    current_hash = _extract_commit_hash(__version__)
+    current_hash = extract_commit_hash(__version__)
     lines = [
         "📦 ccbot 版本信息\n",
         f"运行中: {__version__}",
@@ -475,8 +430,8 @@ async def version_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     async with httpx.AsyncClient() as client:
         main_info, dev_info = await asyncio.gather(
-            _fetch_branch_info(client, "main"),
-            _fetch_branch_info(client, "dev"),
+            fetch_branch_info(client, "main"),
+            fetch_branch_info(client, "dev"),
         )
 
     remote_lines: list[str] = []
@@ -753,6 +708,10 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not update.message or not update.message.photo:
         return
 
+    if is_update_in_progress():
+        await safe_reply(update.message, "⬆️ 正在升级，请稍候...")
+        return
+
     chat = update.message.chat
     thread_id = _get_thread_id(update)
     if chat.type in ("group", "supergroup") and thread_id is not None:
@@ -822,6 +781,10 @@ async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     if not update.message or not update.message.voice:
+        return
+
+    if is_update_in_progress():
+        await safe_reply(update.message, "⬆️ 正在升级，请稍候...")
         return
 
     if not config.openai_api_key:
@@ -989,6 +952,10 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     if not update.message or not update.message.text:
+        return
+
+    if is_update_in_progress():
+        await safe_reply(update.message, "⬆️ 正在升级，请稍候...")
         return
 
     thread_id = _get_thread_id(update)
@@ -2127,9 +2094,17 @@ async def post_init(application: Application) -> None:
     _status_poll_task = asyncio.create_task(status_poll_loop(application.bot))
     logger.info("Status polling task started")
 
+    # Start auto-update task
+    _auto_update_task = await start_auto_update(application.bot)
+    logger.info("Auto-update task started")
+
 
 async def post_shutdown(application: Application) -> None:
     global _status_poll_task
+
+    # Stop auto-update
+    stop_auto_update()
+    logger.info("Auto-update stopped")
 
     # Stop status polling
     if _status_poll_task:
