@@ -356,6 +356,65 @@ async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await safe_reply(update.message, f"```\n{trimmed}\n```")
 
 
+async def pin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Add a directory to pinned quick-start list."""
+    user = update.effective_user
+    if not user or not is_user_allowed(user.id):
+        return
+    if not update.message:
+        return
+
+    args = update.message.text or ""
+    path = args.removeprefix("/pin").strip()
+    if not path:
+        await safe_reply(update.message, "用法: `/pin ~/dev/project`")
+        return
+
+    ok, msg = config.add_pinned_dir(path)
+    await safe_reply(update.message, msg)
+
+
+async def unpin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Remove a directory from pinned quick-start list."""
+    user = update.effective_user
+    if not user or not is_user_allowed(user.id):
+        return
+    if not update.message:
+        return
+
+    args = update.message.text or ""
+    name = args.removeprefix("/unpin").strip()
+    if not name:
+        await safe_reply(update.message, "用法: `/unpin project` 或 `/unpin ~/dev/project`")
+        return
+
+    ok, msg = config.remove_pinned_dir(name)
+    await safe_reply(update.message, msg)
+
+
+async def pins_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """List all pinned directories."""
+    user = update.effective_user
+    if not user or not is_user_allowed(user.id):
+        return
+    if not update.message:
+        return
+
+    if not config.pinned_dirs:
+        await safe_reply(
+            update.message,
+            "📌 收藏夹为空\n\n用 `/pin ~/dev/project` 添加目录",
+        )
+        return
+
+    lines = ["📌 *收藏目录*\n"]
+    for d in config.pinned_dirs:
+        display = d.replace(str(Path.home()), "~")
+        lines.append(f"• `{display}`")
+    lines.append(f"\n共 {len(config.pinned_dirs)} 个")
+    await safe_reply(update.message, "\n".join(lines))
+
+
 # --- Screenshot keyboard with quick control keys ---
 
 # key_id → (tmux_key, enter, literal)
@@ -1914,6 +1973,9 @@ async def post_init(application: Application) -> None:
         BotCommand("kill", "Kill session and delete topic"),
         BotCommand("unbind", "Unbind topic from session (keeps window running)"),
         BotCommand("usage", "Show Claude Code usage remaining"),
+        BotCommand("pin", "Pin a directory: /pin ~/dev/project"),
+        BotCommand("unpin", "Unpin a directory: /unpin project"),
+        BotCommand("pins", "List pinned directories"),
     ]
     # Add Claude Code slash commands
     for cmd_name, desc in CC_COMMANDS.items():
@@ -1989,6 +2051,9 @@ def create_bot() -> Application:
     application.add_handler(CommandHandler("esc", esc_command))
     application.add_handler(CommandHandler("unbind", unbind_command))
     application.add_handler(CommandHandler("usage", usage_command))
+    application.add_handler(CommandHandler("pin", pin_command))
+    application.add_handler(CommandHandler("unpin", unpin_command))
+    application.add_handler(CommandHandler("pins", pins_command))
     application.add_handler(CallbackQueryHandler(callback_handler))
     # Topic closed event — auto-kill associated window
     application.add_handler(

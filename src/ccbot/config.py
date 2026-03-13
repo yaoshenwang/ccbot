@@ -8,6 +8,7 @@ The module-level `config` instance is imported by nearly every other module.
 Key class: Config (singleton instantiated as `config`).
 """
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -94,13 +95,9 @@ class Config:
         )
 
         # Pinned directories for quick-start UI
-        pinned_dirs_str = os.getenv("PINNED_DIRS", "")
-        self.pinned_dirs: list[str] = []
-        if pinned_dirs_str:
-            for d in pinned_dirs_str.split(","):
-                expanded = str(Path(d.strip()).expanduser().resolve())
-                if Path(expanded).is_dir():
-                    self.pinned_dirs.append(expanded)
+        # Persisted in pinned_dirs.json; PINNED_DIRS env var seeds on first run
+        self.pinned_dirs_file = self.config_dir / "pinned_dirs.json"
+        self.pinned_dirs: list[str] = self._load_pinned_dirs()
 
         # OpenAI API for voice message transcription (optional)
         self.openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
@@ -126,6 +123,76 @@ class Config:
     def is_user_allowed(self, user_id: int) -> bool:
         """Check if a user is in the allowed list."""
         return user_id in self.allowed_users
+
+    def _load_pinned_dirs(self) -> list[str]:
+        """Load pinned dirs from JSON file, seeding from env var if file doesn't exist."""
+        if self.pinned_dirs_file.is_file():
+            try:
+                dirs = json.loads(self.pinned_dirs_file.read_text())
+                if isinstance(dirs, list):
+                    return [d for d in dirs if Path(d).is_dir()]
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        # Seed from PINNED_DIRS env var on first run
+        pinned_dirs_str = os.getenv("PINNED_DIRS", "")
+        dirs: list[str] = []
+        if pinned_dirs_str:
+            for d in pinned_dirs_str.split(","):
+                expanded = str(Path(d.strip()).expanduser().resolve())
+                if Path(expanded).is_dir():
+                    dirs.append(expanded)
+            if dirs:
+                self._save_pinned_dirs(dirs)
+        return dirs
+
+    def _save_pinned_dirs(self, dirs: list[str]) -> None:
+        """Persist pinned dirs list to JSON file."""
+        try:
+            self.pinned_dirs_file.write_text(json.dumps(dirs, indent=2) + "\n")
+        except OSError as e:
+            logger.error("Failed to save pinned dirs: %s", e)
+
+    def add_pinned_dir(self, path: str) -> tuple[bool, str]:
+        """Add a directory to pinned list. Returns (success, message)."""
+        expanded = str(Path(path.strip()).expanduser().resolve())
+        if not Path(expanded).is_dir():
+            return False, f"目录不存在: `{path}`"
+        if expanded in self.pinned_dirs:
+            display = expanded.replace(str(Path.home()), "~")
+            return False, f"已收藏: `{display}`"
+        self.pinned_dirs.append(expanded)
+        self._save_pinned_dirs(self.pinned_dirs)
+        display = expanded.replace(str(Path.home()), "~")
+        return True, f"✅ 已收藏: `{display}`"
+
+    def remove_pinned_dir(self, name: str) -> tuple[bool, str]:
+        """Remove a directory from pinned list by basename or full path.
+
+        Returns (success, message).
+        """
+        # Try exact match first (full path or with ~ expansion)
+        expanded = str(Path(name.strip()).expanduser().resolve())
+        if expanded in self.pinned_dirs:
+            self.pinned_dirs.remove(expanded)
+            self._save_pinned_dirs(self.pinned_dirs)
+            display = expanded.replace(str(Path.home()), "~")
+            return True, f"✅ 已移除: `{display}`"
+
+        # Try basename match
+        matches = [d for d in self.pinned_dirs if Path(d).name == name.strip()]
+        if len(matches) == 1:
+            self.pinned_dirs.remove(matches[0])
+            self._save_pinned_dirs(self.pinned_dirs)
+            display = matches[0].replace(str(Path.home()), "~")
+            return True, f"✅ 已移除: `{display}`"
+        if len(matches) > 1:
+            display = "\n".join(
+                f"• `{m.replace(str(Path.home()), '~')}`" for m in matches
+            )
+            return False, f"多个匹配，请用完整路径:\n{display}"
+
+        return False, f"未找到: `{name}`"
 
 
 config = Config()
