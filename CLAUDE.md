@@ -25,7 +25,7 @@ ccbot hook --install                  # 自动安装 Claude Code SessionStart ho
 
 | 分支 | 用途 | Telegram Bot | 群组 | 部署目标 |
 |:-----|:-----|:-------------|:-----|:---------|
-| **main** | 生产版本，稳定可用 | `@ccmux_bot`（生产） | 生产群组 | Mac Mini LaunchAgent |
+| **main** | 生产版本，稳定可用 | `@yaoshen_ccbot`（生产） | 生产群组 | Mac Mini LaunchAgent |
 | **dev** | 功能开发与测试 | `@ccmux_dev_bot`（测试） | 测试群组 | Mac Mini 单独进程 |
 
 两个 bot 各自绑定独立的 Telegram 群组，互不干扰。dev bot 的 `.env` 使用不同的 `TELEGRAM_BOT_TOKEN`，但 `ALLOWED_USERS` 相同。
@@ -34,7 +34,7 @@ ccbot hook --install                  # 自动安装 Claude Code SessionStart ho
 1. 功能开发始终在 `dev` 分支进行
 2. 在测试群组中通过 dev bot 验证功能正常
 3. 确认无误后 `git merge dev` 到 `main`，推送远程
-4. Mac Mini 上更新生产：`uv tool install git+<repo>@main --force` → 重启 LaunchAgent
+4. GitHub Actions 自动部署到 Mac Mini（SSH 安装 + 重启 LaunchAgent）
 
 **核心准则：**
 
@@ -44,6 +44,7 @@ ccbot hook --install                  # 自动安装 Claude Code SessionStart ho
 | 禁止未测试就合并到 main | 必须在测试群组实际操作确认 |
 | dev 改坏不影响生产 | 两个 bot 进程完全隔离 |
 | 回滚优先 | 生产出问题时，`git revert` 或重装上一个 main commit |
+| 修改必须提交并推送 | 每次代码修改在交付前必须完成 commit 并 push 到远程仓库 |
 
 ---
 
@@ -107,13 +108,19 @@ ccbot hook --install                  # 自动安装 Claude Code SessionStart ho
 | LaunchAgent | `~/Library/LaunchAgents/com.ccbot.plist` |
 | 日志 | `/tmp/ccbot.log`, `/tmp/ccbot.err` |
 
+### 生产自动部署（GitHub Actions）
+
+push 到 main 分支后，`.github/workflows/deploy.yml` 自动 SSH 到 Mac Mini 执行更新和重启。
+
+需要配置的 GitHub Secrets：`MINI_SSH_HOST`、`MINI_SSH_USER`、`MINI_SSH_KEY`。
+
 ### 测试实例（dev 分支）
 
 | 配置项 | 值 |
 |:-------|:---|
-| 安装方式 | clone 仓库，切 dev 分支，`uv run ccbot run` 前台运行 |
+| 安装方式 | clone 仓库，切 dev 分支，`uv run ccbot dev` 前台运行（自动监听代码变更重启） |
 | 配置文件 | 项目目录下 `.env`（使用 dev bot token） |
-| 运行方式 | 手动前台运行，不需要 LaunchAgent |
+| 运行方式 | `uv run ccbot dev` 自动重启，不需要 LaunchAgent |
 
 ### 常用操作
 

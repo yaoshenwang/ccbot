@@ -62,13 +62,21 @@ class Config:
         self.tmux_session_name = os.getenv("TMUX_SESSION_NAME", "ccbot")
         self.tmux_main_window_name = "__main__"
 
+        # State directory: isolated per instance when TMUX_SESSION_NAME is
+        # non-default, so multiple bot instances do not clobber each other.
+        if self.tmux_session_name != "ccbot":
+            self.state_dir = self.config_dir / self.tmux_session_name
+        else:
+            self.state_dir = self.config_dir
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+
         # Claude command to run in new windows
         self.claude_command = os.getenv("CLAUDE_COMMAND", "claude")
 
-        # All state files live under config_dir
-        self.state_file = self.config_dir / "state.json"
+        # All state files live under state_dir (isolated per instance)
+        self.state_file = self.state_dir / "state.json"
         self.session_map_file = self.config_dir / "session_map.json"
-        self.monitor_state_file = self.config_dir / "monitor_state.json"
+        self.monitor_state_file = self.state_dir / "monitor_state.json"
 
         # Claude Code session monitoring configuration
         # Support custom projects path for Claude variants (e.g., cc-mirror, zai)

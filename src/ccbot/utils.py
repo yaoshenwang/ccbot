@@ -18,7 +18,7 @@ CCBOT_DIR_ENV = "CCBOT_DIR"
 def ccbot_dir() -> Path:
     """Resolve config directory from CCBOT_DIR env var or default ~/.ccbot."""
     raw = os.environ.get(CCBOT_DIR_ENV, "")
-    return Path(raw) if raw else Path.home() / ".ccbot"
+    return Path(raw).expanduser() if raw else Path.home() / ".ccbot"
 
 
 def atomic_write_json(path: Path, data: Any, indent: int = 2) -> None:
