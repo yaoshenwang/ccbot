@@ -277,6 +277,16 @@ class AutoUpdater:
             notified.add(key)
 
             chat_id = session_manager.resolve_chat_id(user_id, thread_id)
+            # If resolve_chat_id fell back to user_id, the group_chat_ids
+            # mapping is missing — skip notification instead of risking
+            # a false "thread not found" that would delete a valid binding.
+            if chat_id == user_id and thread_id is not None:
+                logger.debug(
+                    "Skipping notification: no group_chat_id for user=%d thread=%d",
+                    user_id,
+                    thread_id,
+                )
+                continue
             try:
                 # Use bot.send_message directly (not safe_send which swallows errors)
                 await self._bot.send_message(
